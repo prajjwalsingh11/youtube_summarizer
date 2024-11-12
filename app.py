@@ -8,7 +8,7 @@ import re
 
 def load_environment():
     """Load environment variables"""
-    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    env_path = r"C:\coding\youtube summarizer\youtube_summarizer\project.env"
     if os.path.exists(env_path):
         load_dotenv(env_path)
     
@@ -98,6 +98,7 @@ def get_available_languages():
     """Return a dictionary of available languages"""
     return {
         'English': 'en',
+        'Hindi' : 'hi',
         'Deutsch': 'de',
         'Italiano': 'it',
         'Español': 'es',
@@ -106,9 +107,21 @@ def get_available_languages():
         'Polski': 'pl',
         '日本語': 'ja',
         '中文': 'zh',
-        'Русский': 'ru'
+        'Русский': 'ru',
+        '한국어': 'ko',  # Korean
+        'Português': 'pt',  # Portuguese
+        'العربية': 'ar',  # Arabic
+        'Türkçe': 'tr',  # Turkish
+        'বাংলা': 'bn',  # Bengali
+        'मराठी': 'mr',  # Marathi
+        'தமிழ்': 'ta',  # Tamil
+        'తెలుగు': 'te',  # Telugu
+        'ಕನ್ನಡ': 'kn',  # Kannada
+        'മലയാളം': 'ml',  # Malayalam
+        'भोजपुरी': 'bh' # Bhojpuri
     }
 
+# Function to create summary prompt
 def create_summary_prompt(text, target_language, mode='video'):
     """Create an optimized prompt for summarization in the target language and mode"""
     language_prompts = {
@@ -118,6 +131,13 @@ def create_summary_prompt(text, target_language, mode='video'):
             'key_points': 'KEY POINTS',
             'takeaways': 'MAIN TAKEAWAYS',
             'context': 'CONTEXT & IMPLICATIONS'
+        },
+        'hi': {
+            'title': 'शीर्षक',
+            'overview': 'अवलोकन',
+            'key_points': 'मुख्य बिंदु',
+            'takeaways': 'मुख्य निष्कर्ष',
+            'context': 'प्रसंग और प्रभाव'
         },
         'de': {
             'title': 'TITEL',
@@ -143,25 +163,19 @@ def create_summary_prompt(text, target_language, mode='video'):
         to the target language."""
 
         user_prompt = f"""Please provide a detailed podcast-style summary of the following content in {target_language}. 
-        Structure your response as follows:
+        Structure your response as follows, making it an interactive dialogue between two individuals:
 
         🎙️ {prompts['title']}: Create an engaging title
 
-        🎧 {prompts['overview']} (3-5 sentences):
-        - Provide a detailed context and main purpose
-
-        🔍 {prompts['key_points']}:
-        - Deep dive into the main arguments
-        - Include specific examples and anecdotes
-        - Highlight unique perspectives and expert opinions
+        🗣️ Interactive Dialogue: 
+        - Begin with a question from one person and a response from another.
+        - Continue with a back-and-forth conversation, exploring key arguments and points.
+        - Include examples and anecdotes as part of the dialogue.
+        - Ensure the conversation flows naturally and engagingly.
 
         📈 {prompts['takeaways']}:
-        - List 5-7 practical insights
-        - Explain their significance and potential impact
-
-        🌐 {prompts['context']}:
-        - Broader context discussion
-        - Future implications and expert predictions
+        - List 5-7 practical insights discussed during the conversation.
+        - Explain their significance and potential impact.
 
         Text to summarize: {text}
 
@@ -169,10 +183,10 @@ def create_summary_prompt(text, target_language, mode='video'):
 
     else:
         system_prompt = f"""You are an expert content analyst and summarizer. Create a comprehensive 
-        summary in {target_language}. Ensure all content is fully translated and culturally adapted 
+        video-style summary in {target_language}. Ensure all content is fully translated and culturally adapted 
         to the target language."""
 
-        user_prompt = f"""Please provide a detailed summary of the following content in {target_language}. 
+        user_prompt = f"""Please provide a detailed video-style summary of the following content in {target_language}. 
         Structure your response as follows:
 
         🎯 {prompts['title']}: Create a descriptive title
@@ -199,34 +213,52 @@ def create_summary_prompt(text, target_language, mode='video'):
 
     return system_prompt, user_prompt
 
-def summarize_with_langchain_and_openai(transcript, language_code, model_name='llama-3.1-8b-instant', mode='video'):
-    # Initial split with larger chunks
+
+# Function to create prompts
+def create_prompts(language_code, section_number, text_chunk, mode):
+    language_instructions = {
+        'en': 'Create a detailed summary of the following section in English. Maintain all important information, arguments, and connections.',
+        'hi': 'कृपया निम्नलिखित खंड का हिंदी में संक्षिप्त वर्णन करें। सभी महत्वपूर्ण जानकारी, तर्क और कनेक्शन बनाए रखें।',
+        'de': 'Erstellen Sie eine detaillierte Zusammenfassung des folgenden Abschnitts auf Deutsch. Behalten Sie alle wichtigen Informationen, Argumente und Verbindungen bei.',
+        'it': 'Crea un riassunto dettagliato della seguente sezione in italiano. Mantieni tutte le informazioni importanti, gli argomenti e le connessioni.'
+    }
+
+    instruction = language_instructions.get(language_code, language_instructions['en'])
+
+    if mode == 'podcast':
+        instruction += ' Present this summary in a narrative, engaging style suitable for a podcast. Ensure a natural flow with storytelling elements.'
+    elif mode == 'video':
+        instruction += ' Present this summary in a structured, concise format suitable for a video. Use bullet points and headings to clearly organize the key points.'
+    else:
+        raise ValueError("Invalid mode. Choose either 'podcast' or 'video'.")
+
+    system_prompt = f"""You are an expert content summarizer. {instruction}
+    Ensure the summary is fully in {language_code}, without any words from other languages."""
+
+    user_prompt = f"""{instruction}
+    Pay special attention to:
+    - Main topics and arguments
+    - Important details and examples
+    - Connections with other mentioned topics
+    - Key statements and conclusions
+
+    Text: {text_chunk}"""
+
+    return system_prompt, user_prompt
+
+# Function to summarize with Langchain and OpenAI
+def summarize_with_langchain_and_openai(transcript, mode, language_code='en', model_name='llama-3.1-8b-instant'):
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=7000,  # Keep this to ensure we have room for prompts
+        chunk_size=7000,
         chunk_overlap=1000,
         length_function=len
     )
     texts = text_splitter.split_text(transcript)
-    
-    # Create context-rich intermediate summaries
+
     intermediate_summaries = []
     
     for i, text_chunk in enumerate(texts):
-        # Customized system prompt for intermediate summaries
-        system_prompt = f"""You are an expert content summarizer. Create a detailed 
-        summary of section {i+1} in {language_code}. Maintain important details, arguments, 
-        and connections. This summary will later be part of a comprehensive final summary."""
-
-        # Customized user prompt for intermediate summaries
-        user_prompt = f"""Create a detailed summary of the following section. 
-        Maintain all important information, arguments, and connections.
-        Pay special attention to:
-        - Main topics and arguments
-        - Important details and examples
-        - Connections with other mentioned topics
-        - Key statements and conclusions
-
-        Text: {text_chunk}"""
+        system_prompt, user_prompt = create_summary_prompt(text_chunk, language_code, mode)
         
         try:
             response = groq_client.chat.completions.create(
@@ -235,8 +267,8 @@ def summarize_with_langchain_and_openai(transcript, language_code, model_name='l
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.7,
-                max_tokens=8000  # Increased to maximum available tokens
+                temperature=0.7,  # Keeping temperature low to maintain consistency
+                max_tokens=8000
             )
             
             summary = response.choices[0].message.content
@@ -245,23 +277,25 @@ def summarize_with_langchain_and_openai(transcript, language_code, model_name='l
         except Exception as e:
             st.error(f"Error with Groq API during intermediate summarization: {str(e)}")
             return None
-    
-    # Combine intermediate summaries
+
     combined_summary = "\n\n=== Next Section ===\n\n".join(intermediate_summaries)
     
-    # Final summary with optimized prompt
+    final_instruction = 'Maintain a narrative and engaging style, making sure to connect the points naturally and conversationally. Use transitions and storytelling elements to keep it engaging.' if mode == 'podcast' else 'Keep the summary concise and well-structured, focusing on key points and details. Use bullet points and headings to organize the content clearly.'
+
     final_system_prompt = f"""You are an expert in creating comprehensive summaries. 
     Create a coherent, well-structured complete summary in {language_code} from the 
     provided intermediate summaries. Connect the information logically and establish 
-    important relationships."""
+    important relationships. Ensure the summary is fully in {language_code}, without any words from other languages.
+    {final_instruction}"""
     
     final_user_prompt = f"""Create a final, comprehensive summary from the following 
-    intermediate summaries. The summary should:
+    intermediate summaries. The summary should be fully in {language_code}, without any words from other languages.
     - Include all important topics and arguments
     - Establish logical connections between topics
     - Have a clear structure
     - Highlight key statements and most important insights
-    
+    {final_instruction}
+
     Intermediate summaries:
     {combined_summary}"""
     
@@ -272,8 +306,8 @@ def summarize_with_langchain_and_openai(transcript, language_code, model_name='l
                 {"role": "system", "content": final_system_prompt},
                 {"role": "user", "content": final_user_prompt}
             ],
-            temperature=0.7,
-            max_tokens=8000  # Increased to maximum available tokens
+            temperature=0.7,  # Keeping temperature low to maintain consistency
+            max_tokens=8000
         )
         
         final_summary = final_response.choices[0].message.content
@@ -328,9 +362,9 @@ def main():
 
                     summary = summarize_with_langchain_and_openai(
                         transcript, 
+                        mode,
                         target_language_code,
-                        model_name='llama-3.1-8b-instant',
-                        mode=mode
+                        model_name='llama-3.1-8b-instant'
                     )
 
                     status_text.text('✨ Summary Ready!')
@@ -343,3 +377,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

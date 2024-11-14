@@ -4,6 +4,9 @@ import streamlit as st
 from youtube_transcript_api import YouTubeTranscriptApi
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from dotenv import load_dotenv
+from fpdf import FPDF
+from docx import Document
+from io import BytesIO
 import re
 
 def load_environment():
@@ -220,7 +223,25 @@ def create_prompts(language_code, section_number, text_chunk, mode):
         'en': 'Create a detailed summary of the following section in English. Maintain all important information, arguments, and connections.',
         'hi': 'कृपया निम्नलिखित खंड का हिंदी में संक्षिप्त वर्णन करें। सभी महत्वपूर्ण जानकारी, तर्क और कनेक्शन बनाए रखें।',
         'de': 'Erstellen Sie eine detaillierte Zusammenfassung des folgenden Abschnitts auf Deutsch. Behalten Sie alle wichtigen Informationen, Argumente und Verbindungen bei.',
-        'it': 'Crea un riassunto dettagliato della seguente sezione in italiano. Mantieni tutte le informazioni importanti, gli argomenti e le connessioni.'
+        'it': 'Crea un riassunto dettagliato della seguente sezione in italiano. Mantieni tutte le informazioni importanti, gli argomenti e le connessioni.',
+        'es': 'Cree un resumen detallado de la siguiente sección en español. Mantenga toda la información importante, los argumentos y las conexiones.',
+        'fr': 'Créez un résumé détaillé de la section suivante en français. Conservez toutes les informations importantes, arguments et connexions.',
+        'nl': 'Maak een gedetailleerde samenvatting van het volgende gedeelte in het Nederlands. Behoud alle belangrijke informatie, argumenten en verbindingen.',
+        'pl': 'Utwórz szczegółowe podsumowanie następującej sekcji po polsku. Zachowaj wszystkie ważne informacje, argumenty i połączenia.',
+        'ja': '以下のセクションの詳細な要約を日本語で作成してください。すべての重要な情報、議論、および接続を維持します。',
+        'zh': '用中文创建以下部分的详细摘要。保留所有重要信息、论点和连接。',
+        'ru': 'Создайте подробное резюме следующего раздела на русском языке. Сохраните всю важную информацию, аргументы и связи.',
+        'ko': '다음 섹션에 대한 자세한 요약을 한국어로 작성하세요. 모든 중요한 정보, 논쟁 및 연결을 유지합니다.',
+        'pt': 'Crie um resumo detalhado da seção a seguir em português. Mantenha todas as informações importantes, argumentos e conexões.',
+        'ar': 'قم بإنشاء ملخص مفصل للقسم التالي باللغة العربية. حافظ على جميع المعلومات المهمة والحجج والاتصالات.',
+        'tr': 'Aşağıdaki bölümün Türkçe ayrıntılı bir özetini oluşturun. Tüm önemli bilgileri, argümanları ve bağlantıları koruyun.',
+        'bn': 'নিম্নলিখিত অংশের বাংলায় একটি বিশদ সংক্ষিপ্তসার তৈরি করুন। সমস্ত গুরুত্বপূর্ণ তথ্য, যুক্তি এবং সংযোগগুলি বজায় রাখুন।',
+        'mr': 'खालील विभागाचा मराठीत सविस्तर आढावा घ्या. सर्व महत्त्वाची माहिती, तर्क आणि कनेक्शन कायम ठेवा.',
+        'ta': 'கீழ்க்கண்ட பகுதியின் தமிழில் விரிவான சுருக்கத்தை உருவாக்குங்கள். அனைத்து முக்கியமான தகவல்களையும் வாதங்களையும் இணைப்புகளையும் பராமரிக்கவும்.',
+        'te': 'క్రింది విభాగం యొక్క తెలుగు లో వివరమైన సారాంశాన్ని సృష్టించండి. అన్ని ముఖ్యమైన సమాచారాన్ని, వాదనలను మరియు సంబంధాలను నిర్వహించండి.',
+        'kn': 'ಕೆಳಗಿನ ವಿಭಾಗದ ಕನ್ನಡದಲ್ಲಿ ವಿವರವಾದ ಸಂಕ್ಷಿಪ್ತ ವಿವರವನ್ನು ರಚಿಸಿ. ಎಲ್ಲಾ ಮುಖ್ಯ ಮಾಹಿತಿಯನ್ನು, ವಾದಗಳನ್ನು ಮತ್ತು ಸಂಪರ್ಕಗಳನ್ನು ಉಳಿಸಿ.',
+        'ml': 'താഴെ പറയുന്ന വിഭാഗത്തിന്റെ മലയാളത്തിൽ വിശദമായ സാരാംശം സൃഷ്ടിക്കുക. എല്ലാ പ്രധാന വിവരങ്ങളും വാദങ്ങളും ബന്ധങ്ങളും നിലനിർത്തുക.',
+        'bh': 'निम्नलिखित खंड का भोजपुरी में एक विस्तृत सारांश बनाईं। सभे महत्वपूर्ण जानकारी, तर्क अउर संबंधन के बनावे के काम करीं।'
     }
 
     instruction = language_instructions.get(language_code, language_instructions['en'])
@@ -316,34 +337,126 @@ def summarize_with_langchain_and_openai(transcript, mode, language_code='en', mo
         st.error(f"Error with Groq API during final summarization: {str(e)}")
         return None
 
+# Functions to generate pdf and doc
+
+from fpdf import FPDF
+from docx import Document
+from io import BytesIO
+
+class PDF(FPDF):
+    def header(self):
+        self.set_font('FreeSerif', 'B', 12)
+        self.cell(0, 10, 'Summary Report', 0, 1, 'C')
+        self.ln(10)
+
+    def chapter_title(self, title):
+        self.set_font('FreeSerif', 'B', 12)
+        self.cell(0, 10, title, 0, 1, 'L')
+        self.ln(5)
+
+    def chapter_body(self, body):
+        self.set_font('FreeSerif', '', 12)
+        for line in body.split('\n'):
+            if line.strip().endswith(':'):
+                self.set_font('FreeSerif', 'B', 12)
+                self.multi_cell(0, 10, line.strip())
+                self.set_font('FreeSerif', '', 12)
+            elif line.startswith('* '):
+                self.set_font('FreeSerif', '', 12)
+                self.multi_cell(0, 10, u'\u2022 ' + line[2:])
+            else:
+                self.multi_cell(0, 10, line)
+            self.ln(5)
+
+def generate_pdf(summary, title="Summary"):
+    pdf = PDF()
+
+    # Load Unicode fonts from the specified path
+    font_path = 'C:\\coding\\youtube summarizer\\youtube_summarizer\\textFormat\\freeserif\\'
+    pdf.add_font('FreeSerif', '', font_path + 'FreeSerif.ttf', uni=True)
+    pdf.add_font('FreeSerif', 'B', font_path + 'FreeSerifBold.ttf', uni=True)
+    pdf.add_font('FreeSerif', 'I', font_path + 'FreeSerifItalic.ttf', uni=True)
+    pdf.add_font('FreeSerif', 'BI', font_path + 'FreeSerifBoldItalic.ttf', uni=True)
+
+    pdf.add_page()
+    pdf.chapter_title(title)
+    pdf.chapter_body(summary)
+
+    # Directly return the byte array
+    pdf_output = pdf.output(dest='S')
+    return bytes(pdf_output)
+
+
+def generate_doc(summary, title="Summary"):
+    doc = Document()
+    doc.add_heading(title, 0)
+
+    for line in summary.split('\n'):
+        if line.startswith('**') and line.endswith('**'):
+            paragraph = doc.add_paragraph()
+            run = paragraph.add_run(line.strip('**'))
+            run.bold = True
+        elif line.strip().endswith(':'):
+            doc.add_heading(line.strip(), level=2)
+        elif line.startswith('* '):
+            doc.add_paragraph(line[2:], style='List Bullet')
+        else:
+            doc.add_paragraph(line)
+
+    with BytesIO() as doc_output:
+        doc.save(doc_output)
+        doc_output.seek(0)
+        return doc_output.read()
+
 def main():
     st.title('📺 Advanced YouTube Video Summarizer')
     st.markdown("""
     This tool creates comprehensive summaries of YouTube videos using advanced AI technology.
     It works with both videos that have transcripts and those that don't!
     """)
-    
+
+    # Initialize session state variables
+    if 'link' not in st.session_state:
+        st.session_state.link = ""
+    if 'language' not in st.session_state:
+        st.session_state.language = ""
+    if 'mode' not in st.session_state:
+        st.session_state.mode = ""
+    if 'summary' not in st.session_state:
+        st.session_state.summary = None
+
     col1, col2, col3 = st.columns([3, 1, 1])
     
     with col1:
-        link = st.text_input('🔗 Enter YouTube video URL:')
+        link = st.text_input('🔗 Enter YouTube video URL:', key='link_input')
     
     with col2:
         languages = get_available_languages()
         target_language = st.selectbox(
             '🌍 Select Summary Language:',
             options=list(languages.keys()),
-            index=0
+            index=list(languages.keys()).index(st.session_state.language) if st.session_state.language else 0,
+            key='language_input'
         )
         target_language_code = languages[target_language]
 
     with col3:
         mode = st.selectbox(
             '🎙️ Select Mode:',
-            options=['Video', 'Podcast'],
-            index=0
+            options=['video', 'podcast'],
+            index=['video', 'podcast'].index(st.session_state.mode) if st.session_state.mode else 0,
+            key='mode_input'
         )
         mode = mode.lower()
+
+    # Check for changes in link, language, or mode
+    if (link != st.session_state.link or 
+        target_language != st.session_state.language or 
+        mode != st.session_state.mode):
+        st.session_state.link = link
+        st.session_state.language = target_language
+        st.session_state.mode = mode
+        st.session_state.summary = None
 
     if st.button('Generate Summary'):
         if link:
@@ -368,13 +481,35 @@ def main():
                     )
 
                     status_text.text('✨ Summary Ready!')
-                    st.markdown(summary)
+                    # Save summary in session state
+                    st.session_state.summary = summary
+
                     progress.progress(100)
+
             except Exception as e:
                 st.error(f"An error occurred: {str(e)}")
         else:
             st.warning('Please enter a valid YouTube link.')
 
+    # Display summary and download buttons if summary exists
+    if st.session_state.summary:
+        st.markdown(st.session_state.summary)
+        pdf_data = generate_pdf(st.session_state.summary)
+        doc_data = generate_doc(st.session_state.summary)
+        
+        st.download_button(
+            label="Download as PDF",
+            data=pdf_data,
+            file_name="summary.pdf",
+            mime="application/pdf"
+        )
+        
+        st.download_button(
+            label="Download as DOCX",
+            data=doc_data,
+            file_name="summary.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
 if __name__ == "__main__":
     main()
-

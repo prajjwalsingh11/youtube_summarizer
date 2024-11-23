@@ -1,16 +1,24 @@
 import os
 import nltk
 from nltk.data import find
-from openai import OpenAI
 import streamlit as st
 from youtube_transcript_api import YouTubeTranscriptApi
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from dotenv import load_dotenv
 from fpdf import FPDF
+import yt_dlp
 from docx import Document
 from io import BytesIO
 import re
+import math
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
+from pytube import YouTube
+from pytube.exceptions import PytubeError
+from moviepy.video.io.ffmpeg_tools import ffmpeg_extract_subclip
+import cv2
+import subprocess
+from urllib.error import HTTPError
+from openai import OpenAI
 
 # Check if the vader_lexicon is already downloaded 
 try: 
@@ -546,6 +554,128 @@ def analyze_sentiment(text):
     sentiment = analyzer.polarity_scores(text)
     return sentiment
 
+def map_key_points_to_intervals(key_points, total_duration):
+    """
+    Maps key points to evenly distributed time intervals across the video duration.
+
+    Args:
+        key_points (list): List of key points (strings).
+        total_duration (int): Total duration of the video in seconds.
+
+    Returns:
+        list: List of tuples representing (start_time, end_time) for each key point.
+    """
+    num_points = len(key_points)
+    interval_duration = total_duration / num_points  # Divide video into equal segments
+    
+    intervals = []
+    for i in range(num_points):
+        start_time = i * interval_duration
+        end_time = min((i + 1) * interval_duration, total_duration)
+        intervals.append((start_time, end_time))
+    
+    return intervals
+
+def find_subtitle_index(current_time, intervals):
+    """
+    Finds the index of the subtitle that corresponds to the given time.
+
+    Args:
+        current_time (float): Current time in seconds.
+        intervals (list): List of (start_time, end_time) intervals.
+
+    Returns:
+        int or None: Index of the subtitle if found, otherwise None.
+    """
+    for idx, (start_time, end_time) in enumerate(intervals):
+        if start_time <= current_time < end_time:
+            return idx
+    return None
+
+def extract_key_points(summary):
+    # Assuming key points are indicated by bullet points or specific markers in the summary
+    key_points = [line for line in summary.split('\n') if line.startswith('🔑') or line.startswith('* ')]
+    return key_points
+
+def create_highlight_reels(video_path, key_points, subtitles, reel_duration=60):
+
+    # Load video with OpenCV
+    cap = cv2.VideoCapture(video_path)
+    
+    # Get video properties
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    total_duration = total_frames / fps  # in seconds
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    # Convert key points to time intervals
+    intervals = map_key_points_to_intervals(key_points, total_duration)
+    
+    # Calculate number of reels
+    num_reels = math.ceil(total_duration / reel_duration)
+    reel_paths = []
+
+    for i in range(num_reels):
+        start_time = i * reel_duration
+        end_time = min((i + 1) * reel_duration, total_duration)
+        
+        output_video_path = f'reel_{i + 1}.mp4'
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+        
+        cap.set(cv2.CAP_PROP_POS_MSEC, start_time * 1000)
+        while cap.isOpened() and cap.get(cv2.CAP_PROP_POS_MSEC) < end_time * 1000:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            current_time = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000
+            subtitle_index = find_subtitle_index(current_time, intervals)
+
+            if subtitle_index is not None:
+                current_subtitle = subtitles[subtitle_index]
+                cv2.putText(frame, current_subtitle, (10, height - 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+            
+            out.write(frame)
+
+        out.release()
+        reel_paths.append(output_video_path)
+    
+    cap.release()
+    return reel_paths
+
+def get_time_interval(point):
+    # Placeholder for actual mapping of points to time intervals
+    time_intervals = {
+        "First Key Point": (10, 20),  # start time in seconds, end time in seconds
+        "Second Key Point": (30, 45),
+        "Third Key Point": (50, 65)
+        # Add more mappings as needed
+    }
+    return time_intervals.get(point.strip(), (0, 5))  # default to the first 5 seconds if not found
+
+def download_youtube_video(url, cookies_path=None):
+    try:
+        ydl_opts = {
+            'format': 'bestaudio+bvideo',  # Download best audio and video streams
+            'outtmpl': 'videos/%(title)s.%(ext)s',  # Save video with title
+            'quiet': False,  # Show progress during download
+        }
+
+        if cookies_path:
+            ydl_opts['cookiefile'] = cookies_path
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=True)
+            video_path = ydl.prepare_filename(info_dict)
+            return video_path
+    except Exception as e:
+        print(f"Error downloading the video: {str(e)}")
+        return None
+
+
 def main():
     st.title('📺 Advanced YouTube Video Summarizer')
     st.markdown("""
@@ -564,6 +694,8 @@ def main():
         st.session_state.summary = None
     if 'sentiment' not in st.session_state:
         st.session_state.sentiment = None
+    if 'reel' not in st.session_state:
+        st.session_state.reel = None
 
     col1, col2, col3 = st.columns([3, 1, 1])
     
@@ -598,6 +730,7 @@ def main():
         st.session_state.mode = mode
         st.session_state.summary = None
         st.session_state.sentiment = None
+        st.session_state.reel = None
 
     if st.button('Generate Summary'):
         if link:
@@ -641,12 +774,12 @@ def main():
 
         sentiment = st.session_state.sentiment
         if sentiment:
+            st.markdown("### Sentiment Analysis")
+            st.json(sentiment)
             neg = sentiment['neg'] * 100
             neu = sentiment['neu'] * 100
             pos = sentiment['pos'] * 100
             compound = sentiment['compound']
-            st.markdown("### Sentiment Analysis")
-            st.json(sentiment)
             st.markdown(f"""
             **Negative Sentiment**: {neg:.1f}% - Parts of the text have a negative tone, such as criticism, sadness, or anger.\n
             **Neutral Sentiment**: {neu:.1f}% - The majority of the text is neutral, without strong positive or negative emotions.\n
@@ -661,6 +794,38 @@ def main():
             - **Strong Overall Negative Tone**: The overall sentiment score of {compound:.4f} indicates that the general tone of the video is quite negative.
             """)
 
+        key_points = extract_key_points(st.session_state.summary)
+        subtitles = [point.strip('🔑').strip('* ') for point in key_points]
+
+        if st.button('Create Reel(s)'):
+            with st.spinner('Creating reel(s)...'):
+                video_path = download_youtube_video(link)
+                if video_path:
+                    subtitles = [point.strip('🔑').strip('* ') for point in key_points]
+                    reel_paths = create_highlight_reels(video_path, key_points, subtitles, reel_duration=60)
+                    if reel_paths:
+                        st.success(f'{len(reel_paths)} reel(s) created successfully!')
+                        for i, reel_path in enumerate(reel_paths):
+                            st.markdown(f"### Reel {i + 1}")
+                            st.download_button(
+                                label=f"Download Reel {i + 1} (MP4)",
+                                data=open(reel_path, 'rb').read(),
+                                file_name=f"reel_{i + 1}.mp4",
+                                mime="video/mp4")
+                    else:
+                        st.error('Failed to create reels.')
+                else:
+                    st.error('Video download failed. Reel creation aborted.')
+
+        if st.session_state.reel:
+            st.markdown('### Download Reel')
+            st.download_button(
+                label="Download Reel (MP4)",
+                data=open(st.session_state.reel, 'rb').read(),
+                file_name="reel.mp4",
+                mime="video/mp4"
+            )
+
         pdf_data = generate_pdf(st.session_state.summary)
         if pdf_data:
             st.download_button(
@@ -673,9 +838,9 @@ def main():
         doc_data = generate_doc(st.session_state.summary)
         st.download_button(
             label="Download as DOCX",
-            data=doc_data,
-            file_name="summary.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                data=doc_data,
+                file_name="summary.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
 if __name__ == "__main__":

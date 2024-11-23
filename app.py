@@ -128,35 +128,161 @@ def get_available_languages():
 def create_summary_prompt(text, target_language, mode='video'):
     """Create an optimized prompt for summarization in the target language and mode"""
     language_prompts = {
-        'en': {
-            'title': 'TITLE',
-            'overview': 'OVERVIEW',
-            'key_points': 'KEY POINTS',
-            'takeaways': 'MAIN TAKEAWAYS',
-            'context': 'CONTEXT & IMPLICATIONS'
-        },
-        'hi': {
-            'title': 'शीर्षक',
-            'overview': 'अवलोकन',
-            'key_points': 'मुख्य बिंदु',
-            'takeaways': 'मुख्य निष्कर्ष',
-            'context': 'प्रसंग और प्रभाव'
-        },
-        'de': {
-            'title': 'TITEL',
-            'overview': 'ÜBERBLICK',
-            'key_points': 'KERNPUNKTE',
-            'takeaways': 'HAUPTERKENNTNISSE',
-            'context': 'KONTEXT & AUSWIRKUNGEN'
-        },
-        'it': { 
-            'title': 'TITOLO',
-            'overview': 'PANORAMICA',
-            'key_points': 'PUNTI CHIAVE',
-            'takeaways': 'CONCLUSIONI PRINCIPALI',
-            'context': 'CONTESTO E IMPLICAZIONI'
-        }
+    'en': {
+        'title': 'TITLE',
+        'overview': 'OVERVIEW',
+        'key_points': 'KEY POINTS',
+        'takeaways': 'MAIN TAKEAWAYS',
+        'context': 'CONTEXT & IMPLICATIONS'
+    },
+    'hi': {
+        'title': 'शीर्षक',
+        'overview': 'अवलोकन',
+        'key_points': 'मुख्य बिंदु',
+        'takeaways': 'मुख्य निष्कर्ष',
+        'context': 'प्रसंग और प्रभाव'
+    },
+    'de': {
+        'title': 'TITEL',
+        'overview': 'ÜBERBLICK',
+        'key_points': 'KERNPUNKTE',
+        'takeaways': 'HAUPTERKENNTNISSE',
+        'context': 'KONTEXT & AUSWIRKUNGEN'
+    },
+    'it': { 
+        'title': 'TITOLO',
+        'overview': 'PANORAMICA',
+        'key_points': 'PUNTI CHIAVE',
+        'takeaways': 'CONCLUSIONI PRINCIPALI',
+        'context': 'CONTESTO E IMPLICAZIONI'
+    },
+    'es': {
+        'title': 'TÍTULO',
+        'overview': 'VISIÓN GENERAL',
+        'key_points': 'PUNTOS CLAVE',
+        'takeaways': 'CONCLUSIONES PRINCIPALES',
+        'context': 'CONTEXTO E IMPLICACIONES'
+    },
+    'fr': {
+        'title': 'TITRE',
+        'overview': 'APERÇU',
+        'key_points': 'POINTS CLÉS',
+        'takeaways': 'CONCLUSIONS PRINCIPALES',
+        'context': 'CONTEXTE ET IMPLICATIONS'
+    },
+    'nl': {
+        'title': 'TITEL',
+        'overview': 'OVERZICHT',
+        'key_points': 'BELANGRIJKE PUNTEN',
+        'takeaways': 'HOOFDRESULTATEN',
+        'context': 'CONTEXT & IMPLICATIES'
+    },
+    'pl': {
+        'title': 'TYTUŁ',
+        'overview': 'PRZEGLĄD',
+        'key_points': 'KLUCZOWE PUNKTY',
+        'takeaways': 'GŁÓWНЕ ВЫВОДЫ',
+        'context': 'КОНТЕКСТ И ИМПЛИКАЦИИ'
+    },
+    'ja': {
+        'title': 'タイトル',
+        'overview': '概要',
+        'key_points': '主なポイント',
+        'takeaways': '主な結論',
+        'context': '文脈と影響'
+    },
+    'zh': {
+        'title': '标题',
+        'overview': '概述',
+        'key_points': '关键点',
+        'takeaways': '主要结论',
+        'context': '背景与意义'
+    },
+    'ru': {
+        'title': 'ЗАГОЛОВОК',
+        'overview': 'ОБЗОР',
+        'key_points': 'КЛЮЧЕВЫЕ ПУНКТЫ',
+        'takeaways': 'ОСНОВНЫЕ ВЫВОДЫ',
+        'context': 'КОНТЕКСТ И ЗНАЧЕНИЕ'
+    },
+    'ko': {
+        'title': '제목',
+        'overview': '개요',
+        'key_points': '핵심 포인트',
+        'takeaways': '주요 결론',
+        'context': '맥락 및 의미'
+    },
+    'pt': {
+        'title': 'TÍTULO',
+        'overview': 'VISÃO GERAL',
+        'key_points': 'PONTOS PRINCIPAIS',
+        'takeaways': 'CONCLUSÕES PRINCIPAIS',
+        'context': 'CONTEXTO E IMPLICAÇÕES'
+    },
+    'ar': {
+        'title': 'العنوان',
+        'overview': 'نظرة عامة',
+        'key_points': 'النقاط الرئيسية',
+        'takeaways': 'الاستنتاجات الرئيسية',
+        'context': 'السياق والآثار'
+    },
+    'tr': {
+        'title': 'BAŞLIK',
+        'overview': 'GENEL BAKIŞ',
+        'key_points': 'TEMEL NOKTALAR',
+        'takeaways': 'ANA SONUÇLAR',
+        'context': 'BAĞLAM VE ETKİLER'
+    },
+    'bn': {
+        'title': 'শিরোনাম',
+        'overview': 'ওভারভিউ',
+        'key_points': 'মূল বিষয়',
+        'takeaways': 'মুখ্য বিষয়গুলি',
+        'context': 'প্রসঙ্গ ও প্রভাব'
+    },
+    'mr': {
+        'title': 'शीर्षक',
+        'overview': 'आढावा',
+        'key_points': 'महत्त्वाचे मुद्दे',
+        'takeaways': 'मुख्य निष्कर्ष',
+        'context': 'संदर्भ आणि परिणाम'
+    },
+    'ta': {
+        'title': 'தலைப்பு',
+        'overview': 'அவலோகனம்',
+        'key_points': 'முக்கிய அம்சங்கள்',
+        'takeaways': 'முக்கிய முடிவுகள்',
+        'context': 'சூழல் மற்றும் விளைவுகள்'
+    },
+    'te': {
+        'title': 'శీర్షిక',
+        'overview': 'సమగ్రం',
+        'key_points': 'ముఖ్య అంశాలు',
+        'takeaways': 'ప్రధాన పాయింట్లు',
+        'context': 'సందర్భం మరియు ప్రతిఫలాలు'
+    },
+    'kn': {
+        'title': 'ಶೀರ್ಷಿಕೆ',
+        'overview': 'ಆವಲೋಕನ',
+        'key_points': 'ಮುಖ್ಯ ಅಂಶಗಳು',
+        'takeaways': 'ಪ್ರಮುಖ ತತ್ವಗಳು',
+        'context': 'ಸಂದರ್ಭ ಮತ್ತು ಪರಿಣಾಮಗಳು'
+    },
+    'ml': {
+        'title': 'തലക്കെട്ട്',
+        'overview': 'അവലോകനം',
+        'key_points': 'പ്രധാന പോയിന്റുകൾ',
+        'takeaways': 'മുഖ്യ സമാഹാരങ്ങൾ',
+        'context': 'സന്ദർഭവും പ്രതിഫലങ്ങളും'
+    },
+    'bh': {
+        'title': 'शीर्षक',
+        'overview': 'ओवरव्यू',
+        'key_points': 'मुख्य बिंदु',
+        'takeaways': 'मुख्य निष्कर्ष',
+        'context': 'प्रसंग और प्रभाव'
     }
+}
 
     prompts = language_prompts.get(target_language, language_prompts['en'])
 
@@ -337,12 +463,7 @@ def summarize_with_langchain_and_openai(transcript, mode, language_code='en', mo
         st.error(f"Error with Groq API during final summarization: {str(e)}")
         return None
 
-# Functions to generate pdf and doc
-
-from fpdf import FPDF
-from docx import Document
-from io import BytesIO
-
+# Define the PDF class
 class PDF(FPDF):
     def header(self):
         self.set_font('FreeSerif', 'B', 12)
@@ -368,6 +489,7 @@ class PDF(FPDF):
                 self.multi_cell(0, 10, line)
             self.ln(5)
 
+# Function to generate PDF
 def generate_pdf(summary, title="Summary"):
     pdf = PDF()
 
@@ -382,11 +504,11 @@ def generate_pdf(summary, title="Summary"):
     pdf.chapter_title(title)
     pdf.chapter_body(summary)
 
-    # Directly return the byte array
-    pdf_output = pdf.output(dest='S')
-    return bytes(pdf_output)
+    # Output PDF to a string
+    pdf_output = pdf.output(dest='S').encode('latin1')
+    return pdf_output
 
-
+# Function to generate DOCX
 def generate_doc(summary, title="Summary"):
     doc = Document()
     doc.add_heading(title, 0)
@@ -495,15 +617,15 @@ def main():
     if st.session_state.summary:
         st.markdown(st.session_state.summary)
         pdf_data = generate_pdf(st.session_state.summary)
+        if pdf_data:
+            st.download_button(
+                label="Download as PDF",
+                data=pdf_data,
+                file_name="summary.pdf",
+                mime="application/pdf"
+            )
+        
         doc_data = generate_doc(st.session_state.summary)
-        
-        st.download_button(
-            label="Download as PDF",
-            data=pdf_data,
-            file_name="summary.pdf",
-            mime="application/pdf"
-        )
-        
         st.download_button(
             label="Download as DOCX",
             data=doc_data,

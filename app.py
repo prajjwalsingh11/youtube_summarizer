@@ -10,6 +10,7 @@ import yt_dlp
 from docx import Document
 from io import BytesIO
 import re
+import time
 import math
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from pytube import YouTube
@@ -19,78 +20,69 @@ import cv2
 import subprocess
 from urllib.error import HTTPError
 from openai import OpenAI
+from concurrent.futures import ThreadPoolExecutor
 
-# Check if the vader_lexicon is already downloaded 
-try: 
-    find('sentiment/vader_lexicon.zip') 
-except LookupError: 
+# Ensure that the vader_lexicon is downloaded
+try:
+    find('sentiment/vader_lexicon.zip')
+except LookupError:
     nltk.download('vader_lexicon')
 
 def load_environment():
-    """Load environment variables"""
+    """Load environment variables from a .env file."""
     env_path = r"C:\coding\youtube summarizer\youtube_summarizer\project.env"
     if os.path.exists(env_path):
         load_dotenv(env_path)
-    
+
     api_key = os.getenv('GROQ_API_KEY')
     if not api_key:
         raise ValueError("GROQ_API_KEY not found in environment variables")
-    
+
     return api_key
 
 # Initialize Groq client
 try:
     api_key = load_environment()
-    groq_client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.groq.com/openai/v1"
-    )
+    groq_client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
 except Exception as e:
     st.error(f"Error initializing API client: {str(e)}")
     st.stop()
 
 def extract_video_id(youtube_url):
-    """Extract video ID from different YouTube URL formats"""
+    """Extract video ID from different YouTube URL formats."""
     patterns = [
         r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',  # Standard and shared URLs
-        r'(?:embed\/)([0-9A-Za-z_-]{11})',   # Embed URLs
+        r'(?:embed\/)([0-9A-Za-z_-]{11})',  # Embed URLs
         r'(?:youtu\.be\/)([0-9A-Za-z_-]{11})',  # Shortened URLs
-        r'(?:shorts\/)([0-9A-Za-z_-]{11})',   # YouTube Shorts
+        r'(?:shorts\/)([0-9A-Za-z_-]{11})',  # YouTube Shorts
         r'^([0-9A-Za-z_-]{11})$'  # Just the video ID
     ]
-    
+
     youtube_url = youtube_url.strip()
-    
     for pattern in patterns:
         match = re.search(pattern, youtube_url)
         if match:
             return match.group(1)
-    
     raise ValueError("Could not extract video ID from URL")
 
 def get_transcript(youtube_url):
-    """Get transcript using YouTube Transcript API with cookies"""
+    """Get transcript using YouTube Transcript API with cookies."""
     try:
         video_id = extract_video_id(youtube_url)
-        
-        # Get cookies file path
         cookies_file = os.getenv('COOKIE_PATH', os.path.join(os.path.dirname(__file__), 'cookies.txt'))
-        
+
         if not os.path.exists(cookies_file):
             st.error("Cookie file not found. Please follow the setup instructions in the README.")
             return None, None
-            
+
         try:
-            # Read cookies from file
             with open(cookies_file, 'r') as f:
                 cookies_content = f.read()
                 if not cookies_content.strip():
                     st.error("Cookie file is empty. Please re-export your YouTube cookies.")
                     return None, None
-            
-            # Get transcript with cookies
+
             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, cookies=cookies_file)
-            
             try:
                 transcript = transcript_list.find_manually_created_transcript()
             except:
@@ -99,207 +91,55 @@ def get_transcript(youtube_url):
                 except Exception as e:
                     st.error("Your YouTube cookies might have expired. Please re-export your cookies and try again.")
                     return None, None
-            
+
             full_transcript = " ".join([part['text'] for part in transcript.fetch()])
             language_code = transcript.language_code
-            
             return full_transcript, language_code
-                
+
         except Exception as e:
             st.error("Authentication failed. Please update your cookies.txt file with fresh YouTube cookies.")
             st.info("Tip: Sign in to YouTube again and re-export your cookies using the browser extension.")
             return None, None
-            
+
     except Exception as e:
         st.error("Invalid YouTube URL. Please check the link and try again.")
         return None, None
 
-
 def get_available_languages():
-    """Return a dictionary of available languages"""
+    """Return a dictionary of available languages."""
     return {
-        'English': 'en',
-        'Hindi' : 'hi',
-        'Deutsch': 'de',
-        'Italiano': 'it',
-        'Español': 'es',
-        'Français': 'fr',
-        'Nederlands': 'nl',
-        'Polski': 'pl',
-        '日本語': 'ja',
-        '中文': 'zh',
-        'Русский': 'ru',
-        '한국어': 'ko',  # Korean
-        'Português': 'pt',  # Portuguese
-        'العربية': 'ar',  # Arabic
-        'Türkçe': 'tr',  # Turkish
-        'বাংলা': 'bn',  # Bengali
-        'मराठी': 'mr',  # Marathi
-        'தமிழ்': 'ta',  # Tamil
-        'తెలుగు': 'te',  # Telugu
-        'ಕನ್ನಡ': 'kn',  # Kannada
-        'മലയാളം': 'ml',  # Malayalam
-        'भोजपुरी': 'bh' # Bhojpuri
+        'English': 'en', 'Hindi': 'hi', 'Deutsch': 'de', 'Italiano': 'it', 'Español': 'es', 'Français': 'fr',
+        'Nederlands': 'nl', 'Polski': 'pl', '日本語': 'ja', '中文': 'zh', 'Русский': 'ru', '한국어': 'ko',
+        'Português': 'pt', 'العربية': 'ar', 'Türkçe': 'tr', 'বাংলা': 'bn', 'मराठी': 'mr', 'தமிழ்': 'ta',
+        'తెలుగు': 'te', 'ಕನ್ನಡ': 'kn', 'മലയാളം': 'ml', 'भोजपुरी': 'bh'
     }
 
-# Function to create summary prompt
+# Function to create summary prompts
 def create_summary_prompt(text, target_language, mode='video'):
-    """Create an optimized prompt for summarization in the target language and mode"""
+    """Create an optimized prompt for summarization in the target language and mode."""
     language_prompts = {
-        'en': {
-            'title': 'TITLE',
-            'overview': 'OVERVIEW',
-            'key_points': 'KEY POINTS',
-            'takeaways': 'MAIN TAKEAWAYS',
-            'context': 'CONTEXT & IMPLICATIONS'
-        },
-        'hi': {
-            'title': 'शीर्षक',
-            'overview': 'अवलोकन',
-            'key_points': 'मुख्य बिंदु',
-            'takeaways': 'मुख्य निष्कर्ष',
-            'context': 'प्रसंग और प्रभाव'
-        },
-        'de': {
-            'title': 'TITEL',
-            'overview': 'ÜBERBLICK',
-            'key_points': 'KERNPUNKTE',
-            'takeaways': 'HAUPTERKENNTNISSE',
-            'context': 'KONTEXT & AUSWIRKUNGEN'
-        },
-        'it': { 
-            'title': 'TITOLO',
-            'overview': 'PANORAMICA',
-            'key_points': 'PUNTI CHIAVE',
-            'takeaways': 'CONCLUSIONI PRINCIPALI',
-            'context': 'CONTESTO E IMPLICAZIONI'
-        },
-        'es': {
-            'title': 'TÍTULO',
-            'overview': 'VISIÓN GENERAL',
-            'key_points': 'PUNTOS CLAVE',
-            'takeaways': 'CONCLUSIONES PRINCIPALES',
-            'context': 'CONTEXTO E IMPLICACIONES'
-        },
-        'fr': {
-            'title': 'TITRE',
-            'overview': 'APERÇU',
-            'key_points': 'POINTS CLÉS',
-            'takeaways': 'CONCLUSIONS PRINCIPALES',
-            'context': 'CONTEXT & IMPLICATIONS'
-        },
-        'nl': {
-            'title': 'TITEL',
-            'overview': 'OVERZICHT',
-            'key_points': 'BELANGRIJKE PUNTEN',
-            'takeaways': 'HOOFDRESULTATEN',
-            'context': 'CONTEXT & IMPLIKATIES'
-        },
-        'pl': {
-            'title': 'TYTUŁ',
-            'overview': 'PRZEGLĄD',
-            'key_points': 'KLUCZOWE PUNKTY',
-            'takeaways': 'GŁÓВНЫЕ ВЫВОДЫ',
-            'context': 'КОНТЕКСТ И ИМПЛИКАЦИИ'
-        },
-        'ja': {
-            'title': 'タイトル',
-            'overview': '概要',
-            'key_points': '主なポイント',
-            'takeaways': '主な結論',
-            'context': '文脈と影響'
-        },
-        'zh': {
-            'title': '标题',
-            'overview': '概述',
-            'key_points': '关键点',
-            'takeaways': '主要结论',
-            'context': '背景与意义'
-        },
-        'ru': {
-            'title': 'ЗАГОЛОВОК',
-            'overview': 'ОБЗОР',
-            'key_points': 'КЛЮЧЕВЫЕ ПУНКТЫ',
-            'takeaways': 'ОСНОВНЫЕ ВЫВОДЫ',
-            'context': 'КОНТЕКСТ И ЗНАЧЕНИЕ'
-        },
-        'ko': {
-            'title': '제목',
-            'overview': '개요',
-            'key_points': '핵심 포인트',
-            'takeaways': '주요 결론',
-            'context': '맥락 및 의미'
-        },
-        'pt': {
-            'title': 'TÍTULO',
-            'overview': 'VISÃO GERAL',
-            'key_points': 'PONTOS PRINCIPAIS',
-            'takeaways': 'CONCLUSÕES PRINCIPAIS',
-            'context': 'CONTEXTO E IMPLICAÇÕES'
-        },
-        'ar': {
-            'title': 'العنوان',
-            'overview': 'نظرة عامة',
-            'key_points': 'النقاط الرئيسية',
-            'takeaways': 'الاستنتاجات الرئيسية',
-            'context': 'السياق والآثار'
-        },
-        'tr': {
-            'title': 'BAŞLIK',
-            'overview': 'GENEL BAKIŞ',
-            'key_points': 'TEMEL NOKTALAR',
-            'takeaways': 'ANA SONUÇLAR',
-            'context': 'BAĞLAM VE ETKİLER'
-        },
-        'bn': {
-            'title': 'শিরোনাম',
-            'overview': 'ওভারভিউ',
-            'key_points': 'মূল বিষয়',
-            'takeaways': 'মুখ্য বিষয়গুলি',
-            'context': 'প্রসঙ্গ ও প্রভাব'
-        },
-        'mr': {
-            'title': 'शीर्षक',
-            'overview': 'आढावा',
-            'key_points': 'महत्त्वाचे मुद्दे',
-            'takeaways': 'मुख्य निष्कर्ष',
-            'context': 'संदर्भ आणि परिणाम'
-        },
-        'ta': {
-            'title': 'தலைப்பு',
-            'overview': 'அவலோகனம்',
-            'key_points': 'முக்கிய அம்சங்கள்',
-            'takeaways': 'முக்கிய முடிவுகள்',
-            'context': 'சூழல் மற்றும் விளைவுகள்'
-        },
-        'te': {
-            'title': 'శీర్షిక',
-            'overview': 'సమగ్రం',
-            'key_points': 'ముఖ్య అంశాలు',
-            'takeaways': 'ప్రధాన పాయింట్లు',
-            'context': 'సందర్భం మరియు ప్రతిఫలాలు'
-        },
-        'kn': {
-            'title': 'ಶೀರ್ಷಿಕೆ',
-            'overview': 'ಆವಲೋಕನ',
-            'key_points': 'ಮುಖ್ಯ ಅಂಶಗಳು',
-            'takeaways': 'ಪ್ರಮುಖ ತತ್ವಗಳು',
-            'context': 'ಸಂದರ್ಭ ಮತ್ತು ಪರಿಣಾಮಗಳು'
-        },
-        'ml': {
-            'title': 'തലക്കെട്ട്',
-            'overview': 'അവലോകനം',
-            'key_points': 'പ്രധാന പോയിന്റുകൾ',
-            'takeaways': 'മുഖ്യ സമാഹാരങ്ങൾ',
-            'context': 'സന്ദർഭവും പ്രതിഫലങ്ങളും'
-        },
-        'bh': {
-            'title': 'शीर्षक',
-            'overview': 'ओवरव्यू',
-            'key_points': 'मुख्य बिंदु',
-            'takeaways': 'मुख्य निष्कर्ष',
-            'context': 'प्रसंग और प्रभाव'
-        }
+        'en': {'title': 'TITLE', 'overview': 'OVERVIEW', 'key_points': 'KEY POINTS', 'takeaways': 'MAIN TAKEAWAYS', 'context': 'CONTEXT & IMPLICATIONS'},
+        'hi': {'title': 'शीर्षक', 'overview': 'अवलोकन', 'key_points': 'मुख्य बिंदु', 'takeaways': 'मुख्य निष्कर्ष', 'context': 'प्रसंग और प्रभाव'},
+        'de': {'title': 'TITEL', 'overview': 'ÜBERBLICK', 'key_points': 'KERNPUNKTE', 'takeaways': 'HAUPTERKENNTNISSE', 'context': 'KONTEXT & AUSWIRKUNGEN'},
+        'it': {'title': 'TITOLO', 'overview': 'PANORAMICA', 'key_points': 'PUNTI CHIAVE', 'takeaways': 'CONCLUSIONI PRINCIPALI', 'context': 'CONTESTO E IMPLICAZIONI'},
+        'es': {'title': 'TÍTULO', 'overview': 'VISIÓN GENERAL', 'key_points': 'PUNTOS CLAVE', 'takeaways': 'CONCLUSIONES PRINCIPALES', 'context': 'CONTEXTO E IMPLICACIONES'},
+        'fr': {'title': 'TITRE', 'overview': 'APERÇU', 'key_points': 'POINTS CLÉS', 'takeaways': 'CONCLUSIONS PRINCIPALES', 'context': 'CONTEXT & IMPLICATIONS'},
+        'nl': {'title': 'TITEL', 'overview': 'OVERZICHT', 'key_points': 'BELANGRIJKE PUNTEN', 'takeaways': 'HOOFDRESULTATEN', 'context': 'CONTEXT & IMPLIKATIES'},
+        'pl': {'title': 'TYTUŁ', 'overview': 'PRZEGLĄD', 'key_points': 'KLUCZOWE PUNKTY', 'takeaways': 'GŁÓВНЫЕ ВЫВОДЫ', 'context': 'КОНТЕКСТ И ИМПЛИКАЦИИ'},
+        'ja': {'title': 'タイトル', 'overview': '概要', 'key_points': '主なポイント', 'takeaways': '主な結論', 'context': '文脈と影響'},
+        'zh': {'title': '标题', 'overview': '概述', 'key_points': '关键点', 'takeaways': '主要结论', 'context': '背景与意义'},
+        'ru': {'title': 'ЗАГОЛОВОК', 'overview': 'ОБЗОР', 'key_points': 'КЛЮЧЕВЫЕ ПУНКТЫ', 'takeaways': 'ОСНОВНЫЕ ВЫВОДЫ', 'context': 'КОНТЕКСТ И ЗНАЧЕНИЕ'},
+        'ko': {'title': '제목', 'overview': '개요', 'key_points': '핵심 포인트', 'takeaways': '주요 결론', 'context': '맥락 및 의미'},
+        'pt': {'title': 'TÍTULO', 'overview': 'VISÃO GERAL', 'key_points': 'PONTOS PRINCIPAIS', 'takeaways': 'CONCLUSÕES PRINCIPAIS', 'context': 'CONTEXTO E IMPLICAÇÕES'},
+        'ar': {'title': 'العنوان', 'overview': 'نظرة عامة', 'key_points': 'النقاط الرئيسية', 'takeaways': 'الاستنتاجات الرئيسية', 'context': 'السياق والآثار'},
+        'tr': {'title': 'BAŞLIK', 'overview': 'GENEL BAKIŞ', 'key_points': 'TEMEL NOKTALAR', 'takeaways': 'ANA SONUÇLAR', 'context': 'BAĞLAM VE ETKİLER'},
+        'bn': {'title': 'শিরোনাম', 'overview': 'ওভারভিউ', 'key_points': 'মূল বিষয়', 'takeaways': 'মুখ্য বিষয়গুলি', 'context': 'প্রসঙ্গ ও প্রভাব'},
+        'mr': {'title': 'शीर्षक', 'overview': 'आढावा', 'key_points': 'महत्त्वाचे मुद्दे', 'takeaways': 'मुख्य निष्कर्ष', 'context': 'संदर्भ आणि परिणाम'},
+        'ta': {'title': 'தலைப்பு', 'overview': 'அவலோகனம்', 'key_points': 'முக்கிய அம்சங்கள்', 'takeaways': 'முக்கிய முடிவுகள்', 'context': 'சூழல் மற்றும் விளைவுகள்'},
+        'te': {'title': 'శీర్షిక', 'overview': 'సమగ్రం', 'key_points': 'ముఖ్య అంశాలు', 'takeaways': 'ప్రధాన పాయింట్లు', 'context': 'సందర్భం మరియు ప్రతిఫలాలు'},
+        'kn': {'title': 'ಶೀರ್ಷಿಕೆ', 'overview': 'ಆವಲೋಕನ', 'key_points': 'ಮುಖ್ಯ ಅಂಶಗಳು', 'takeaways': 'ಪ್ರಮುಖ ತತ್ವಗಳು', 'context': 'ಸಂದರ್ಭ ಮತ್ತು ಪರಿಣಾಮಗಳು'},
+        'ml': {'title': 'തലക്കെട്ട്', 'overview': 'അവലോകനം', 'key_points': 'പ്രധാന പോയിന്റുകൾ', 'takeaways': 'മുഖ്യ സമാഹാരങ്ങൾ', 'context': 'സന്ദർഭവും പ്രതിഫലങ്ങളും'},
+        'bh': {'title': 'शीर्षक', 'overview': 'ओवरव्यू', 'key_points': 'मुख्य बिंदु', 'takeaways': 'मुख्य निष्कर्ष', 'context': 'प्रसंग और प्रभाव'}
     }
 
     prompts = language_prompts.get(target_language, language_prompts['en'])
@@ -360,9 +200,9 @@ def create_summary_prompt(text, target_language, mode='video'):
 
     return system_prompt, user_prompt
 
-
 # Function to create prompts
 def create_prompts(language_code, section_number, text_chunk, mode):
+    """Create prompts for detailed summarization based on language and mode."""
     language_instructions = {
         'en': 'Create a detailed summary of the following section in English. Maintain all important information, arguments, and connections.',
         'hi': 'कृपया निम्नलिखित खंड का हिंदी में संक्षिप्त वर्णन करें। सभी महत्वपूर्ण जानकारी, तर्क और कनेक्शन बनाए रखें।',
@@ -411,20 +251,10 @@ def create_prompts(language_code, section_number, text_chunk, mode):
 
     return system_prompt, user_prompt
 
-# Function to summarize with Langchain and OpenAI
-def summarize_with_langchain_and_openai(transcript, mode, language_code='en', model_name='llama-3.1-8b-instant'):
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=7000,
-        chunk_overlap=1000,
-        length_function=len
-    )
-    texts = text_splitter.split_text(transcript)
-
-    intermediate_summaries = []
-    
-    for i, text_chunk in enumerate(texts):
-        system_prompt, user_prompt = create_summary_prompt(text_chunk, language_code, mode)
-        
+# Function to handle retry logic for API calls
+def api_call_with_retry(system_prompt, user_prompt, model_name, retries=3):
+    wait_time_pattern = re.compile(r"try again in (\d+)m(\d+.\d+)s")
+    for attempt in range(retries):
         try:
             response = groq_client.chat.completions.create(
                 model=model_name,
@@ -432,19 +262,64 @@ def summarize_with_langchain_and_openai(transcript, mode, language_code='en', mo
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.7,  # Keeping temperature low to maintain consistency
+                temperature=0.7,
                 max_tokens=8000
             )
-            
-            summary = response.choices[0].message.content
-            intermediate_summaries.append(summary)
-            
+            return response.choices[0].message.content
         except Exception as e:
-            st.error(f"Error with Groq API during intermediate summarization: {str(e)}")
-            return None
+            if "rate_limit_exceeded" in str(e):
+                match = wait_time_pattern.search(str(e))
+                if match:
+                    minutes, seconds = match.groups()
+                    wait_time = int(minutes) * 60 + float(seconds) + 5  # Add a buffer to the wait time
+                    print(f"Rate limit reached. Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    st.error(f"Error parsing rate limit wait time: {str(e)}")
+                    return None
+            else:
+                st.error(f"Error with Groq API: {str(e)}")
+                return None
+    return None
 
-    combined_summary = "\n\n=== Next Section ===\n\n".join(intermediate_summaries)
-    
+# Function to summarize with retry logic
+# Function to summarize with retry logic
+def summarize_with_langchain_and_openai(transcript, mode, language_code='en', model_name='llama-3.1-8b-instant'):
+    def calculate_chunk_size(transcript_length, model_token_limit=8000):
+        # Estimate tokens (1 token ≈ 4 characters for English)
+        estimated_tokens = transcript_length // 4
+        max_chunk_tokens = model_token_limit - 1000  # Reserve 1000 tokens for prompts
+        chunk_tokens = min(max_chunk_tokens, max(1000, estimated_tokens // 10))  # At least 1/10th of total
+        
+        # Convert tokens to characters
+        chunk_size = chunk_tokens * 4
+        overlap = chunk_size // 5  # 20% overlap for context
+        return chunk_size, overlap
+
+    # Calculate dynamic chunk size and overlap based on transcript length
+    transcript_length = len(transcript)
+    chunk_size, chunk_overlap = calculate_chunk_size(transcript_length)
+
+    # Use the calculated chunk size and overlap
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        length_function=len
+    )
+    texts = text_splitter.split_text(transcript)
+
+    def get_summary(text_chunk):
+        system_prompt, user_prompt = create_summary_prompt(text_chunk, language_code, mode)
+        return api_call_with_retry(system_prompt, user_prompt, model_name)
+
+    # Summarize each chunk in parallel
+    with ThreadPoolExecutor() as executor:
+        intermediate_summaries = list(executor.map(get_summary, texts))
+
+    # Combine intermediate summaries
+    combined_summary = "\n\n=== Next Section ===\n\n".join(filter(None, intermediate_summaries))
+
+    # Create final summary instructions
     final_instruction = 'Maintain a narrative and engaging style, making sure to connect the points naturally and conversationally. Use transitions and storytelling elements to keep it engaging.' if mode == 'podcast' else 'Keep the summary concise and well-structured, focusing on key points and details. Use bullet points and headings to organize the content clearly.'
 
     final_system_prompt = f"""You are an expert in creating comprehensive summaries. 
@@ -452,7 +327,7 @@ def summarize_with_langchain_and_openai(transcript, mode, language_code='en', mo
     provided intermediate summaries. Connect the information logically and establish 
     important relationships. Ensure the summary is fully in {language_code}, without any words from other languages.
     {final_instruction}"""
-    
+
     final_user_prompt = f"""Create a final, comprehensive summary from the following 
     intermediate summaries. The summary should be fully in {language_code}, without any words from other languages.
     - Include all important topics and arguments
@@ -463,24 +338,10 @@ def summarize_with_langchain_and_openai(transcript, mode, language_code='en', mo
 
     Intermediate summaries:
     {combined_summary}"""
-    
-    try:
-        final_response = groq_client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": final_system_prompt},
-                {"role": "user", "content": final_user_prompt}
-            ],
-            temperature=0.7,  # Keeping temperature low to maintain consistency
-            max_tokens=8000
-        )
-        
-        final_summary = final_response.choices[0].message.content
-        return final_summary
-    except Exception as e:
-        st.error(f"Error with Groq API during final summarization: {str(e)}")
-        return None
 
+    # Generate final summary
+    final_summary = api_call_with_retry(final_system_prompt, final_user_prompt, model_name)
+    return final_summary
 
 class PDF(FPDF):
     def header(self):
@@ -555,16 +416,7 @@ def analyze_sentiment(text):
     return sentiment
 
 def map_key_points_to_intervals(key_points, total_duration):
-    """
-    Maps key points to evenly distributed time intervals across the video duration.
-
-    Args:
-        key_points (list): List of key points (strings).
-        total_duration (int): Total duration of the video in seconds.
-
-    Returns:
-        list: List of tuples representing (start_time, end_time) for each key point.
-    """
+    """Map key points to evenly distributed time intervals across the video duration."""
     num_points = len(key_points)
     interval_duration = total_duration / num_points  # Divide video into equal segments
     
@@ -577,42 +429,28 @@ def map_key_points_to_intervals(key_points, total_duration):
     return intervals
 
 def find_subtitle_index(current_time, intervals):
-    """
-    Finds the index of the subtitle that corresponds to the given time.
-
-    Args:
-        current_time (float): Current time in seconds.
-        intervals (list): List of (start_time, end_time) intervals.
-
-    Returns:
-        int or None: Index of the subtitle if found, otherwise None.
-    """
+    """Find the index of the subtitle that corresponds to the given time."""
     for idx, (start_time, end_time) in enumerate(intervals):
         if start_time <= current_time < end_time:
             return idx
     return None
 
 def extract_key_points(summary):
+    """Extract key points from the summary."""
     # Assuming key points are indicated by bullet points or specific markers in the summary
     key_points = [line for line in summary.split('\n') if line.startswith('🔑') or line.startswith('* ')]
     return key_points
 
 def create_highlight_reels(video_path, key_points, subtitles, reel_duration=60):
-
-    # Load video with OpenCV
+    """Create video highlight reels with subtitles."""
     cap = cv2.VideoCapture(video_path)
-    
-    # Get video properties
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     total_duration = total_frames / fps  # in seconds
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
-    # Convert key points to time intervals
     intervals = map_key_points_to_intervals(key_points, total_duration)
-    
-    # Calculate number of reels
     num_reels = math.ceil(total_duration / reel_duration)
     reel_paths = []
 
@@ -620,9 +458,12 @@ def create_highlight_reels(video_path, key_points, subtitles, reel_duration=60):
         start_time = i * reel_duration
         end_time = min((i + 1) * reel_duration, total_duration)
         
-        output_video_path = f'reel_{i + 1}.mp4'
+        video_output_path = f'reel_{i + 1}_video.mp4'
+        audio_output_path = f'reel_{i + 1}_audio.mp4'
+        final_output_path = f'reel_{i + 1}.mp4'
+        
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+        out = cv2.VideoWriter(video_output_path, fourcc, fps, (width, height))
         
         cap.set(cv2.CAP_PROP_POS_MSEC, start_time * 1000)
         while cap.isOpened() and cap.get(cv2.CAP_PROP_POS_MSEC) < end_time * 1000:
@@ -641,13 +482,25 @@ def create_highlight_reels(video_path, key_points, subtitles, reel_duration=60):
             out.write(frame)
 
         out.release()
-        reel_paths.append(output_video_path)
+        
+        # Extract audio using ffmpeg
+        subprocess.run([
+            'ffmpeg', '-y', '-i', video_path, '-ss', str(start_time), '-to', str(end_time),
+            '-q:a', '0', '-map', 'a', audio_output_path
+        ])
+        
+        # Combine video and audio using ffmpeg
+        subprocess.run([
+            'ffmpeg', '-y', '-i', video_output_path, '-i', audio_output_path, '-c:v', 'copy', '-c:a', 'aac', final_output_path
+        ])
+        
+        reel_paths.append(final_output_path)
     
     cap.release()
     return reel_paths
 
 def get_time_interval(point):
-    # Placeholder for actual mapping of points to time intervals
+    """Placeholder for actual mapping of points to time intervals."""
     time_intervals = {
         "First Key Point": (10, 20),  # start time in seconds, end time in seconds
         "Second Key Point": (30, 45),
@@ -657,6 +510,7 @@ def get_time_interval(point):
     return time_intervals.get(point.strip(), (0, 5))  # default to the first 5 seconds if not found
 
 def download_youtube_video(url, cookies_path=None):
+    """Download YouTube video using yt_dlp."""
     try:
         ydl_opts = {
             'format': 'bestaudio+bvideo',  # Download best audio and video streams
@@ -674,7 +528,6 @@ def download_youtube_video(url, cookies_path=None):
     except Exception as e:
         print(f"Error downloading the video: {str(e)}")
         return None
-
 
 def main():
     st.title('📺 Advanced YouTube Video Summarizer')
@@ -801,7 +654,6 @@ def main():
             with st.spinner('Creating reel(s)...'):
                 video_path = download_youtube_video(link)
                 if video_path:
-                    subtitles = [point.strip('🔑').strip('* ') for point in key_points]
                     reel_paths = create_highlight_reels(video_path, key_points, subtitles, reel_duration=60)
                     if reel_paths:
                         st.success(f'{len(reel_paths)} reel(s) created successfully!')
@@ -838,9 +690,9 @@ def main():
         doc_data = generate_doc(st.session_state.summary)
         st.download_button(
             label="Download as DOCX",
-                data=doc_data,
-                file_name="summary.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            data=doc_data,
+            file_name="summary.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
 if __name__ == "__main__":
